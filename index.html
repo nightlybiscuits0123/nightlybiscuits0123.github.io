@@ -1,0 +1,1392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>N64 CDN Player</title>
+    <style>
+        html, body {
+            margin: 0; padding: 0; background: #090a10;
+            overflow: hidden; height: 100%; font-family: sans-serif;
+            color: #fff; display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+        }
+        #game-container { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+        canvas { display: block; background: #000; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        #menu { text-align: center; z-index: 100; }
+        #start-btn { border: 0; border-radius: 8px; padding: 16px 32px; cursor: pointer; background: #b8f279; color: #111; font-weight: bold; font-size: 18px; margin-bottom: 20px; }
+        #start-btn:disabled { opacity: 0.5; cursor: wait; }
+        .small-btn { border: 1px solid #3a3d52; border-radius: 8px; padding: 8px 16px; cursor: pointer; background: transparent; color: #a0a5c0; font-size: 13px; margin: 0 4px 20px; }
+        .small-btn:hover { background: #1c1f30; }
+        #status { font-size: 14px; color: #a0a5c0; margin-bottom: 20px; min-height: 20px; }
+        .controls { font-size: 13px; color: #9294a5; font-family: monospace; line-height: 1.6; }
+
+        /* Game + graphics pickers */
+        .picker-row { margin-bottom: 12px; font-size: 14px; color: #a0a5c0; }
+        .picker-row select {
+            margin-left: 6px; padding: 8px 12px; border-radius: 8px; border: 1px solid #3a3d52;
+            background: #14162a; color: #fff; font-size: 14px; cursor: pointer;
+        }
+
+        /* Controls menu (pop-up) */
+        #controls-modal {
+            display: none; position: fixed; inset: 0; z-index: 400;
+            background: rgba(5, 6, 12, 0.85); align-items: center; justify-content: center;
+        }
+        #controls-panel {
+            background: #14162a; border: 1px solid #3a3d52; border-radius: 12px;
+            padding: 20px 24px; width: min(620px, calc(100vw - 32px)); max-height: 85vh; overflow-y: auto;
+            box-sizing: border-box;
+        }
+        #controls-panel h2 { margin: 0 0 4px; font-size: 20px; }
+        #controls-panel p { margin: 0 0 16px; font-size: 13px; color: #9294a5; }
+        #bind-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; }
+        @media (max-width: 520px) { #bind-list { grid-template-columns: 1fr; } }
+        .bind-group { grid-column: 1 / -1; margin-top: 10px; font-size: 12px; color: #b8f279; text-transform: uppercase; letter-spacing: 0.08em; }
+        .bind-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }
+        .bind-row button {
+            min-width: 110px; padding: 6px 10px; border-radius: 6px; border: 1px solid #3a3d52;
+            background: #0d0f1c; color: #fff; font-family: monospace; font-size: 13px; cursor: pointer;
+        }
+        .bind-row button:hover { border-color: #b8f279; }
+        .bind-row button.waiting { border-color: #b8f279; color: #b8f279; }
+        #controls-actions { display: flex; justify-content: space-between; margin-top: 20px; gap: 10px; }
+        #controls-actions button { margin: 0; }
+        #controls-done { background: #b8f279 !important; color: #111 !important; border: 0 !important; font-weight: bold; }
+
+        /* Pause menu (everything you need while playing lives here) */
+        #pause-overlay {
+            display: none; position: fixed; inset: 0; z-index: 250;
+            background: rgba(5, 6, 12, 0.75); align-items: center; justify-content: center;
+        }
+        #pause-panel {
+            background: #14162a; border: 1px solid #3a3d52; border-radius: 12px;
+            padding: 20px 24px; width: min(420px, calc(100vw - 32px)); box-sizing: border-box; text-align: center;
+        }
+        #pause-panel h2 { font-size: 28px; margin: 0 0 4px; }
+        #pause-panel .hint { color: #9294a5; font-size: 13px; margin: 0 0 16px; }
+        .pause-section { margin-top: 14px; text-align: left; }
+        .pause-section-title { font-size: 12px; color: #b8f279; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+        .pause-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        #pause-panel button, #pause-panel select {
+            border: 1px solid #3a3d52; border-radius: 6px; padding: 8px 10px; cursor: pointer;
+            background: #0d0f1c; color: #d6d9ea; font-size: 13px; width: 100%; box-sizing: border-box;
+        }
+        #pause-panel button:hover, #pause-panel select:hover { border-color: #b8f279; }
+        #btn-resume { background: #b8f279 !important; color: #111 !important; border: 0 !important; font-weight: bold; font-size: 15px !important; padding: 10px !important; }
+        .slider-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 13px; color: #d6d9ea; }
+        .slider-row span:first-child { width: 80px; }
+        .slider-row input[type=range] { flex: 1; accent-color: #b8f279; }
+        .slider-row span:last-child { width: 44px; text-align: right; font-family: monospace; color: #9294a5; }
+        #mouse-status { margin-top: 6px; font-size: 12px; color: #9294a5; }
+
+        /* Little pop-up messages */
+        #toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(20, 22, 34, 0.95); color: #fff; padding: 10px 18px; border-radius: 8px;
+            font-size: 14px; z-index: 500; opacity: 0; transition: opacity 0.3s; pointer-events: none;
+        }
+        #toast.show { opacity: 1; }
+    </style>
+
+    <script>
+        // Where N64Wasm's files live (the .js, .wasm and assets.zip)
+        const N64_CDN = "https://cdn.jsdelivr.net/gh/nbarkhina/N64Wasm@master/dist/";
+
+        // ---- Default controls for each game ----
+        // You can still change any of these from the "Controls" menu on the start screen
+        // (each game remembers its own changes). These are what "Reset to defaults" goes back to.
+        const GOLDENEYE_KEYS = {
+            Mapping_Action_Analog_Up: "w",    // Joystick
+            Mapping_Action_Analog_Down: "s",
+            Mapping_Action_Analog_Left: "a",
+            Mapping_Action_Analog_Right: "d",
+            Mapping_Up: "ArrowUp",            // D-pad
+            Mapping_Down: "ArrowDown",
+            Mapping_Left: "ArrowLeft",
+            Mapping_Right: "ArrowRight",
+            Mapping_Action_Start: "Enter",
+            Mapping_Action_A: "x",
+            Mapping_Action_B: "c",
+            Mapping_Action_Z: "z",            // Z trigger (fire)
+            Mapping_Action_L: "q",
+            Mapping_Action_R: "e",            // R = aim
+            Mapping_Action_CUP: "i",
+            Mapping_Action_CDOWN: "k",
+            Mapping_Action_CLEFT: "j",
+            Mapping_Action_CRIGHT: "l",
+        };
+        const SOUTHAMERICAN_KEYS = {
+            Mapping_Action_Analog_Up: "ArrowUp",   // Joystick
+            Mapping_Action_Analog_Down: "ArrowDown",
+            Mapping_Action_Analog_Left: "a",
+            Mapping_Action_Analog_Right: "d",
+            Mapping_Up: "i",                       // D-pad
+            Mapping_Down: "k",
+            Mapping_Left: "j",
+            Mapping_Right: "l",
+            Mapping_Action_Start: "Enter",
+            Mapping_Action_A: "x",
+            Mapping_Action_B: "c",
+            Mapping_Action_Z: " ",                 // Z trigger
+            Mapping_Action_L: "q",
+            Mapping_Action_R: "f",
+            Mapping_Action_CUP: "w",
+            Mapping_Action_CDOWN: "s",
+            Mapping_Action_CLEFT: "ArrowLeft",
+            Mapping_Action_CRIGHT: "ArrowRight",
+        };
+        // GoldenEye with mouse look: the mouse aims, so WASD moves with the C-buttons.
+        // In the game, set Options > Control Style to "1.2 Solitaire" so C-buttons walk and strafe.
+        const GOLDENEYE_MOUSE_KEYS = {
+            Mapping_Action_CUP: "w",              // walk forward
+            Mapping_Action_CDOWN: "s",            // walk back
+            Mapping_Action_CLEFT: "a",            // strafe left
+            Mapping_Action_CRIGHT: "d",           // strafe right
+            Mapping_Action_Analog_Up: "ArrowUp",  // Joystick (backup for looking)
+            Mapping_Action_Analog_Down: "ArrowDown",
+            Mapping_Action_Analog_Left: "ArrowLeft",
+            Mapping_Action_Analog_Right: "ArrowRight",
+            Mapping_Up: "i",                      // D-pad
+            Mapping_Down: "k",
+            Mapping_Left: "j",
+            Mapping_Right: "l",
+            Mapping_Action_Start: "Enter",
+            Mapping_Action_A: "q",                // next weapon (mouse wheel does this too)
+            Mapping_Action_B: "e",                // use / open doors / reload
+            Mapping_Action_Z: " ",                // fire (left click does this too)
+            Mapping_Action_L: "c",
+            Mapping_Action_R: "f",                // aim (right click does this too)
+        };
+        // Used for any game in the list below that doesn't have its own "keys"
+        const DEFAULT_KEYS = GOLDENEYE_KEYS;
+
+        // ---- Your games ----
+        // Add as many as you want: { name: "what shows in the menu", url: "link to the ROM", keys: CONTROLS }
+        // ("keys" is optional; leave it out to use DEFAULT_KEYS.)
+        // Add mouse: "goldeneye" to turn on mouse look for a GoldenEye ROM (US version or a hack of it).
+        // The page saves ROMs in the browser after the first load, so when you update
+        // a ROM on GitHub, change its ?v= number (v=1 -> v=2) to make it re-download.
+        // Each game keeps its own saves and controls (based on the ROM's file name).
+        const GAMES = [
+            { name: "GoldenEye 007 (remix)", url: "https://cdn.jsdelivr.net/gh/cmackpanda2000/pinballnes@main/storage/emulatorjs/data/games/goldeneye.z64?v=1",     keys: GOLDENEYE_MOUSE_KEYS, mouse: "goldeneye" },
+            { name: "South American",        url: "https://cdn.jsdelivr.net/gh/cmackpanda2000/pinballnes@main/storage/emulatorjs/data/games/southamerican.z64?v=1", keys: SOUTHAMERICAN_KEYS },
+        ];
+
+        // Name of the browser storage for downloaded files. Change it to force everything to re-download.
+        // (Your saves are kept separately, so changing this does NOT delete them.)
+        const CACHE_NAME = "n64-player-v1";
+
+        // ---- Graphics ----
+        // Default plugin (you can also change it from the menu, which remembers your choice):
+        //   "glide" = N64Wasm's default, more accurate (clouds look right)
+        //   "rice"  = faster, but some graphics may look off
+        //   "angrylion" = most accurate, but VERY slow (uses the CPU, not the graphics chip)
+        const DEFAULT_GRAPHICS = "rice";
+        // Show the FPS counter? (60 = full speed)
+        const SHOW_FPS = false;
+
+        // ---- Special keys (these can't be used as game controls) ----
+        const SAVE_STATE_KEY = "F2";
+        const LOAD_STATE_KEY = "F4";
+        const PAUSE_KEY = "Tab";   // opens/closes the pause menu
+        const SAVE_SLOTS = 5; // how many save state slots to offer
+
+        // N64Wasm's own built-in menu, on a key you won't hit by accident.
+        const EMULATOR_MENU_KEY = "F9";
+        // Gamepad buttons (standard controller layout)
+        const JOY = {
+            Joy_Mapping_Up: 12, Joy_Mapping_Down: 13, Joy_Mapping_Left: 14, Joy_Mapping_Right: 15,
+            Joy_Mapping_Action_A: 0, Joy_Mapping_Action_B: 2, Joy_Mapping_Action_Start: 9,
+            Joy_Mapping_Action_Z: 4, Joy_Mapping_Action_L: 6, Joy_Mapping_Action_R: 5, Joy_Mapping_Menu: 11,
+            Joy_Mapping_Action_CLEFT: -1, Joy_Mapping_Action_CRIGHT: -1,
+            Joy_Mapping_Action_CUP: -1, Joy_Mapping_Action_CDOWN: -1
+        };
+
+        // The emulator core calls back into window.myApp, so it has to exist.
+        // (SaveStateEvent gets filled in further down.)
+        window.myApp = {
+            SaveStateEvent() {}, ExportEepEvent() {}, ExportSraEvent() {}, ExportFlaEvent() {},
+            LocalCallback() {}, localCallback() {}, loadCloud() {}, saveCloud() {}, fullscreen() {},
+            remapPressed() {},
+            rivetsData: {
+                inputController: { update() {}, updateMobileControls() {} },
+                useZasCMobile: false
+            }
+        };
+
+        // Resolves once the WebAssembly core has finished starting up
+        let resolveReady;
+        const runtimeReady = new Promise(r => resolveReady = r);
+
+        // Module must be defined BEFORE n64wasm.js loads
+        window.Module = {
+            canvas: null, // set below once the canvas exists
+            print: t => {
+                console.log(t);
+                if (window.onCorePrint) window.onCorePrint(t);
+            },
+            printErr: t => console.warn(t),
+            locateFile: path => N64_CDN + path,
+            onRuntimeInitialized: () => resolveReady()
+        };
+    </script>
+</head>
+<body>
+
+    <div id="menu">
+        <h1>N64 CDN STREAM PLAYER</h1>
+        <div class="picker-row">
+            Game:<select id="game-select"></select>
+        </div>
+        <div class="picker-row">
+            Graphics:<select id="graphics-select">
+                <option value="glide">Glide</option>
+                <option value="rice">Rice</option>
+                <option value="angrylion">Angrylion</option>
+            </select>
+        </div>
+        <div id="status">Loading emulator core...</div>
+        <button id="start-btn" disabled>▶ Launch Emulator</button>
+        <br>
+        <button id="controls-btn" class="small-btn">Controls</button>
+        <button id="menu-import-btn" class="small-btn">Import save file</button>
+        <button id="blank-btn" class="small-btn">Open in about:blank</button>
+        <div class="controls" id="controls-summary"></div>
+    </div>
+
+    <!-- Controls menu -->
+    <div id="controls-modal">
+        <div id="controls-panel">
+            <h2>Controls</h2>
+            <p>Click a button, then press the key you want for it. Press Esc to cancel. If the key is already used, the two controls swap.</p>
+            <div id="bind-list"></div>
+            <div id="controls-actions">
+                <button id="controls-reset" class="small-btn">Reset to defaults</button>
+                <button id="controls-done" class="small-btn">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="game-container"><canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas></div>
+
+    <!-- Pause menu -->
+    <div id="pause-overlay">
+        <div id="pause-panel">
+            <h2>⏸ Paused</h2>
+            <p class="hint">Press Tab to resume</p>
+            <button id="btn-resume">▶ Resume</button>
+
+            <div class="pause-section">
+                <div class="pause-section-title">Save states</div>
+                <select id="slot-select" title="Save state slot"></select>
+                <div class="pause-grid" style="margin-top: 6px;">
+                    <button id="btn-save-state" title="Save state (F2)">Save (F2)</button>
+                    <button id="btn-load-state" title="Load state (F4)">Load (F4)</button>
+                </div>
+            </div>
+
+            <div class="pause-section">
+                <div class="pause-section-title">Save files</div>
+                <div class="pause-grid">
+                    <button id="btn-dl-state" title="Download this slot's save state as a file">Download State (.gz)</button>
+                    <button id="btn-dl-game" title="Download the game's own save as a file">Download Game Save (.srm)</button>
+                </div>
+                <button id="btn-import" title="Load a save file from your computer" style="margin-top: 6px;">⬆ Import save file</button>
+            </div>
+
+            <div class="pause-section" id="mouse-section" style="display:none">
+                <div class="pause-section-title">Mouse look</div>
+                <div class="pause-grid">
+                    <button id="btn-mouse-toggle">Mouse look: On</button>
+                    <button id="btn-mouse-invert">Invert Y: Off</button>
+                </div>
+                <label class="slider-row"><span>Sensitivity</span><input type="range" id="mouse-sens" min="1" max="140" step="1"><span id="mouse-sens-label"></span></label>
+                <label class="slider-row"><span>Gun sway</span><input type="range" id="mouse-sway" min="0" max="6" step="1"><span id="mouse-sway-label"></span></label>
+                <div id="mouse-status"></div>
+            </div>
+
+            <div class="pause-section">
+                <div class="pause-section-title">Screen</div>
+                <button id="btn-fullscreen" title="Toggle fullscreen">⛶ Fullscreen</button>
+            </div>
+
+            <div class="pause-section">
+                <div class="pause-section-title">Game</div>
+                <div class="pause-grid">
+                    <button id="btn-pause-controls" title="Change this game's controls">Controls</button>
+                    <button id="btn-main-menu" title="Go back to the main menu">Main menu</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <input type="file" id="import-input" accept=".gz,.srm,.savememory" style="display:none">
+
+    <div id="toast"></div>
+
+    <script>
+        // Snapshot of this page's HTML (taken before anything changes it),
+        // used to copy the game into an about:blank tab.
+        const PAGE_HTML = "<!DOCTYPE html>\n" + document.documentElement.outerHTML + "</body></html>";
+
+        const startBtn = document.getElementById("start-btn");
+        const statusDiv = document.getElementById("status");
+        const menuDiv = document.getElementById("menu");
+        const containerDiv = document.getElementById("game-container");
+        const canvas = document.getElementById("canvas");
+        const gameSelect = document.getElementById("game-select");
+        const graphicsSelect = document.getElementById("graphics-select");
+        const slotSelect = document.getElementById("slot-select");
+        Module.canvas = canvas;
+
+        let gameStarted = false;
+
+        // ---- Pop-up messages ----
+        let toastTimer = null;
+        function toast(msg) {
+            const el = document.getElementById("toast");
+            el.textContent = msg;
+            el.classList.add("show");
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => el.classList.remove("show"), 4000);
+        }
+
+        // ---- Remember small settings (last game, graphics, controls) ----
+        function getSetting(name, fallback) {
+            try { const v = localStorage.getItem(name); return v === null ? fallback : v; } catch (e) { return fallback; }
+        }
+        function setSetting(name, value) {
+            try { localStorage.setItem(name, value); } catch (e) {}
+        }
+
+        // ---- Open in about:blank ----
+        const blankBtn = document.getElementById("blank-btn");
+        if (window.IN_BLANK) {
+            blankBtn.style.display = "none"; // already inside the about:blank tab
+        }
+        // Opens a fresh copy of this page in a new about:blank tab. Returns the new tab (or null if blocked).
+        function openInBlank() {
+            let win = null;
+            try { win = window.open("about:blank", "_blank"); } catch (e) {}
+            if (!win) {
+                alert("The new tab was blocked. If you're in the StackBlitz editor, open the preview in its own tab first (the 'Open in New Tab' button above the preview), then try again. Otherwise, allow pop-ups for this site.");
+                return null;
+            }
+            // Write the whole game page into the blank tab (no URL needed)
+            const html = PAGE_HTML.replace("<head>", "<head><script>window.IN_BLANK = true;<\/script>");
+            win.document.open();
+            win.document.write(html);
+            win.document.close();
+            return win;
+        }
+        blankBtn.addEventListener("click", openInBlank);
+
+        function resizeGame() {
+            const target = 4 / 3, w = window.innerWidth, h = window.innerHeight;
+            let dw, dh;
+            if (w / h > target) { dh = h; dw = h * target; } else { dw = w; dh = w / target; }
+            containerDiv.style.width = dw + "px"; containerDiv.style.height = dh + "px";
+            canvas.style.width = dw + "px"; canvas.style.height = dh + "px";
+        }
+        window.addEventListener("resize", resizeGame);
+        resizeGame();
+
+        // ============================================================
+        //  GRAPHICS PICKER
+        // ============================================================
+        let graphicsPlugin = getSetting("n64-player-graphics", DEFAULT_GRAPHICS);
+        if (!["glide", "rice", "angrylion"].includes(graphicsPlugin)) graphicsPlugin = DEFAULT_GRAPHICS;
+        graphicsSelect.value = graphicsPlugin;
+        graphicsSelect.addEventListener("change", () => {
+            graphicsPlugin = graphicsSelect.value;
+            setSetting("n64-player-graphics", graphicsPlugin);
+            if (graphicsPlugin === "angrylion") toast("Angrylion is very slow. Expect slow motion on most laptops.");
+        });
+
+        // ============================================================
+        //  CONTROLS MENU
+        // ============================================================
+        const BINDINGS = [
+            ["Joystick"],
+            ["Up", "Mapping_Action_Analog_Up"], ["Down", "Mapping_Action_Analog_Down"],
+            ["Left", "Mapping_Action_Analog_Left"], ["Right", "Mapping_Action_Analog_Right"],
+            ["Buttons"],
+            ["A", "Mapping_Action_A"], ["B", "Mapping_Action_B"],
+            ["Z trigger", "Mapping_Action_Z"], ["Start", "Mapping_Action_Start"],
+            ["L", "Mapping_Action_L"], ["R", "Mapping_Action_R"],
+            ["C-buttons"],
+            ["C-Up", "Mapping_Action_CUP"], ["C-Down", "Mapping_Action_CDOWN"],
+            ["C-Left", "Mapping_Action_CLEFT"], ["C-Right", "Mapping_Action_CRIGHT"],
+            ["D-pad"],
+            ["D-Up", "Mapping_Up"], ["D-Down", "Mapping_Down"],
+            ["D-Left", "Mapping_Left"], ["D-Right", "Mapping_Right"],
+        ];
+        const RESERVED_KEYS = [SAVE_STATE_KEY, LOAD_STATE_KEY, PAUSE_KEY, EMULATOR_MENU_KEY, "Escape"];
+
+        // Each game has its own controls: its defaults, plus any changes you made in the Controls menu
+        function gameDefaultKeys() {
+            return Object.assign({}, DEFAULT_KEYS, (currentGame && currentGame.keys) || {});
+        }
+        function keysSettingName() { return "n64-player-keys-" + romName; }
+        function loadKeys() {
+            const k = gameDefaultKeys();
+            try {
+                const saved = JSON.parse(getSetting(keysSettingName(), "{}"));
+                for (const name in saved) if (name in k && typeof saved[name] === "string") k[name] = saved[name];
+            } catch (e) {}
+            return k;
+        }
+        let keys = {}; // filled in when a game is picked
+        function saveKeys() { setSetting(keysSettingName(), JSON.stringify(keys)); }
+
+        function keyLabel(k) {
+            const names = { " ": "Space", "ArrowUp": "↑", "ArrowDown": "↓", "ArrowLeft": "←", "ArrowRight": "→" };
+            if (names[k]) return names[k];
+            if (k.length === 1) return k.toUpperCase();
+            return k;
+        }
+
+        const modal = document.getElementById("controls-modal");
+        const bindList = document.getElementById("bind-list");
+        let waitingFor = null; // which control is waiting for a key press
+
+        function renderBindList() {
+            bindList.innerHTML = "";
+            for (const [label, map] of BINDINGS) {
+                if (!map) {
+                    const g = document.createElement("div");
+                    g.className = "bind-group";
+                    g.textContent = label;
+                    bindList.appendChild(g);
+                    continue;
+                }
+                const row = document.createElement("div");
+                row.className = "bind-row";
+                const name = document.createElement("span");
+                name.textContent = label;
+                const btn = document.createElement("button");
+                btn.textContent = waitingFor === map ? "Press a key…" : keyLabel(keys[map]);
+                if (waitingFor === map) btn.classList.add("waiting");
+                btn.addEventListener("click", () => { waitingFor = map; renderBindList(); });
+                row.appendChild(name);
+                row.appendChild(btn);
+                bindList.appendChild(row);
+            }
+        }
+
+        function renderControlsSummary() {
+            const k = keys, L = keyLabel;
+            document.getElementById("controls-summary").innerHTML =
+                "Joystick: " + [k.Mapping_Action_Analog_Up, k.Mapping_Action_Analog_Down, k.Mapping_Action_Analog_Left, k.Mapping_Action_Analog_Right].map(L).join(" ") +
+                " | D-Pad: " + [k.Mapping_Up, k.Mapping_Down, k.Mapping_Left, k.Mapping_Right].map(L).join(" ") +
+                " | Start: " + L(k.Mapping_Action_Start) + "<br>" +
+                "A: " + L(k.Mapping_Action_A) + " | B: " + L(k.Mapping_Action_B) + " | Z: " + L(k.Mapping_Action_Z) +
+                " | L: " + L(k.Mapping_Action_L) + " | R: " + L(k.Mapping_Action_R) + "<br>" +
+                "C-buttons: " + [k.Mapping_Action_CUP, k.Mapping_Action_CDOWN, k.Mapping_Action_CLEFT, k.Mapping_Action_CRIGHT].map(L).join(" ") + "<br>" +
+                "Save state: " + SAVE_STATE_KEY + " | Load state: " + LOAD_STATE_KEY + " | Pause menu: " + PAUSE_KEY +
+                (currentGame && currentGame.mouse
+                    ? "<br>Mouse look: click the game to capture the mouse. Left click fire, right click aim, wheel next weapon. Set the game's Control Style to 1.2."
+                    : "");
+        }
+
+        // Catch the key press while waiting (runs before anything else sees the key)
+        document.addEventListener("keydown", e => {
+            if (!waitingFor) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if (e.key === "Escape") { waitingFor = null; renderBindList(); return; }
+            if (RESERVED_KEYS.includes(e.key)) { toast(keyLabel(e.key) + " is used by the player, pick another key."); return; }
+            if (["Shift", "Control", "Alt", "Meta", "CapsLock"].includes(e.key)) {
+                toast(e.key + " can cause problems (like Sticky Keys), pick another key.");
+                return;
+            }
+            const newKey = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+            // If another control already uses this key, swap them
+            for (const other in keys) {
+                if (other !== waitingFor && keys[other] === newKey) keys[other] = keys[waitingFor];
+            }
+            keys[waitingFor] = newKey;
+            waitingFor = null;
+            saveKeys();
+            if (gameStarted) keysChangedInGame = true;
+            renderBindList();
+        }, true);
+
+        let keysChangedInGame = false;
+        function openControls() {
+            waitingFor = null;
+            document.querySelector("#controls-panel h2").textContent = "Controls: " + currentGame.name;
+            document.querySelector("#controls-panel p").textContent = gameStarted
+                ? "Click a button, then press the key you want for it. Press Esc to cancel. Changes take effect after you go back to the main menu and launch again (save a state first so you don't lose your spot)."
+                : "Click a button, then press the key you want for it. Press Esc to cancel. If the key is already used, the two controls swap.";
+            renderBindList();
+            modal.style.display = "flex";
+        }
+        document.getElementById("controls-btn").addEventListener("click", openControls);
+        document.getElementById("controls-done").addEventListener("click", () => {
+            waitingFor = null;
+            modal.style.display = "none";
+            renderControlsSummary();
+            if (gameStarted && keysChangedInGame) {
+                toast("Controls saved. Use Main menu and launch again to use them.");
+            }
+        });
+        document.getElementById("controls-reset").addEventListener("click", () => {
+            keys = gameDefaultKeys();
+            waitingFor = null;
+            saveKeys();
+            if (gameStarted) keysChangedInGame = true;
+            renderBindList();
+            toast("Controls reset to " + currentGame.name + "'s defaults");
+        });
+
+        // ============================================================
+        //  GAME PICKER
+        // ============================================================
+        let currentGame = null;   // { name, url }
+        let romName = "";         // e.g. goldeneye.z64 (used to keep saves separate per game)
+        let gameName = "";        // e.g. goldeneye (used for downloaded file names)
+
+        GAMES.forEach((g, i) => {
+            const opt = document.createElement("option");
+            opt.value = i;
+            opt.textContent = g.name;
+            gameSelect.appendChild(opt);
+        });
+        let startIndex = parseInt(getSetting("n64-player-last-game", "0"), 10);
+        if (!(startIndex >= 0 && startIndex < GAMES.length)) startIndex = 0;
+        gameSelect.value = startIndex;
+
+        function setCurrentGame(index) {
+            currentGame = GAMES[index];
+            romName = currentGame.url.split("?")[0].split("/").pop();
+            gameName = romName.replace(/\.[^.]+$/, "");
+            setSetting("n64-player-last-game", String(index));
+            keys = loadKeys();          // switch to this game's controls
+            renderControlsSummary();
+            loadStateAfterBoot = false; // an import for the old game shouldn't carry over
+            refreshSlotLabels();
+            prepareSelectedGame();
+        }
+        gameSelect.addEventListener("change", () => setCurrentGame(parseInt(gameSelect.value, 10)));
+
+        // ============================================================
+        //  SAVES
+        //  Kept in the browser's storage, separate from the download cache.
+        //  "ingame"       = the game's own save (file select screen)
+        //  "state", "state2", ... = save state slots
+        // ============================================================
+        const SAVE_CACHE = "n64-player-saves";
+        let currentSlot = 1;
+
+        function stateKind(slot) {
+            return slot === 1 ? "state" : "state" + slot; // slot 1 keeps the old name, so older saves still work
+        }
+        function saveKey(kind) {
+            return "https://saves.n64-player/" + encodeURIComponent(romName) + "/" + kind;
+        }
+        async function storeSave(kind, bytes) {
+            try {
+                const c = await caches.open(SAVE_CACHE);
+                await c.put(saveKey(kind), new Response(bytes));
+                return true;
+            } catch (e) {
+                console.warn("Couldn't store save:", e);
+                return false;
+            }
+        }
+        async function loadSave(kind) {
+            try {
+                const c = await caches.open(SAVE_CACHE);
+                const r = await c.match(saveKey(kind));
+                return r ? new Uint8Array(await r.arrayBuffer()) : null;
+            } catch (e) {
+                return null;
+            }
+        }
+        async function hasSave(kind) {
+            try {
+                const c = await caches.open(SAVE_CACHE);
+                return !!(await c.match(saveKey(kind)));
+            } catch (e) { return false; }
+        }
+
+        // ---- Save slot dropdown ----
+        for (let s = 1; s <= SAVE_SLOTS; s++) {
+            const opt = document.createElement("option");
+            opt.value = s;
+            opt.textContent = "Slot " + s;
+            slotSelect.appendChild(opt);
+        }
+        // Mark which slots have a save in them (for the current game)
+        async function refreshSlotLabels() {
+            const forRom = romName;
+            for (let s = 1; s <= SAVE_SLOTS; s++) {
+                const used = await hasSave(stateKind(s));
+                if (forRom !== romName) return; // game changed while checking
+                slotSelect.options[s - 1].textContent = "Slot " + s + (used ? " ●" : " (empty)");
+            }
+        }
+        slotSelect.addEventListener("change", () => {
+            currentSlot = parseInt(slotSelect.value, 10);
+            slotSelect.blur();
+        });
+        // Stop arrow keys / Tab from fiddling with the slot dropdown
+        slotSelect.addEventListener("keydown", e => e.preventDefault());
+
+        // If a save state was imported before launching, load it once the game boots
+        let loadStateAfterBoot = false;
+
+        // 1) In-game saves: the core prints this line whenever the game saves
+        window.onCorePrint = text => {
+            if (text.includes("Starting R4300 emulator") && loadStateAfterBoot) {
+                loadStateAfterBoot = false;
+                setTimeout(loadState, 500);
+            }
+            if (text.includes("writing game.savememory")) {
+                setTimeout(async () => {
+                    try {
+                        const data = FS.readFile("/game.savememory");
+                        if (await storeSave("ingame", data)) toast("Game saved");
+                    } catch (e) { console.warn(e); }
+                }, 100);
+            }
+        };
+
+        // 2) Save states: the core calls this after it finishes writing /savestate.gz
+        window.myApp.SaveStateEvent = async () => {
+            try {
+                const data = FS.readFile("/savestate.gz");
+                const ok = await storeSave(stateKind(currentSlot), data);
+                toast(ok ? "Saved to slot " + currentSlot : "Couldn't save state");
+                refreshSlotLabels();
+            } catch (e) {
+                console.warn(e);
+                toast("Couldn't save state");
+            }
+        };
+        // Saving/loading needs the emulator running, so these close the pause menu first
+        function saveState() {
+            if (!gameStarted) return;
+            if (paused) {
+                setPaused(false);
+                setTimeout(() => Module._neil_serialize(), 150);
+                return;
+            }
+            Module._neil_serialize(); // -> SaveStateEvent above
+        }
+        async function loadState() {
+            if (!gameStarted) return;
+            const data = await loadSave(stateKind(currentSlot));
+            if (!data) { toast("Slot " + currentSlot + " is empty"); return; }
+            if (paused) setPaused(false);
+            setTimeout(() => {
+                FS.writeFile("/savestate.gz", data);
+                Module._neil_unserialize();
+                toast("Loaded slot " + currentSlot);
+            }, 150);
+        }
+
+        // ============================================================
+        //  PAUSE MENU
+        // ============================================================
+        let paused = false;
+        let loopPaused = false; // whether the emulator itself is frozen
+        let audioCtx = null;
+        const pauseOverlay = document.getElementById("pause-overlay");
+
+        function setPaused(p) {
+            if (!gameStarted || p === paused) return;
+            paused = p;
+
+            // Freeze / unfreeze the emulator
+            const canPause = typeof Module.pauseMainLoop === "function" && typeof Module.resumeMainLoop === "function";
+            try {
+                if (p && canPause) { Module.pauseMainLoop(); loopPaused = true; }
+                if (!p && loopPaused) { Module.resumeMainLoop(); loopPaused = false; }
+            } catch (e) { console.warn(e); }
+            if (p && !loopPaused) toast("Couldn't freeze the game, but the menu still works");
+
+            if (audioCtx) { if (p) audioCtx.suspend(); else audioCtx.resume(); }
+            pauseOverlay.style.display = p ? "flex" : "none";
+            if (p) { refreshSlotLabels(); refreshMouseUI(); }
+
+            // Let go of the mouse while paused, grab it again on resume
+            if (p) releaseMouse();
+            else if (mouseLookOn()) captureMouse();
+        }
+        function togglePause() { setPaused(!paused); }
+
+        // Game hotkeys
+        document.addEventListener("keydown", e => {
+            if (!gameStarted) return;
+            if (modal.style.display === "flex") { if (e.key === PAUSE_KEY) e.preventDefault(); return; } // controls menu is open
+            if (e.key === PAUSE_KEY) { e.preventDefault(); togglePause(); return; } // preventDefault stops Tab from moving focus
+            if (e.key === SAVE_STATE_KEY) { e.preventDefault(); saveState(); }
+            if (e.key === LOAD_STATE_KEY) { e.preventDefault(); loadState(); }
+        });
+
+        // 3) Download saves as files
+        function downloadBytes(bytes, filename) {
+            const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+        async function downloadStateFile() {
+            const data = await loadSave(stateKind(currentSlot));
+            if (!data) { toast("Slot " + currentSlot + " is empty. Save to it first."); return; }
+            downloadBytes(data, gameName + ".slot" + currentSlot + ".n64wasm-state.gz");
+        }
+        async function downloadGameSave() {
+            let data = null;
+            try { data = FS.readFile("/game.savememory"); } catch (e) { data = await loadSave("ingame"); }
+            if (!data) { toast("No in-game save yet"); return; }
+            downloadBytes(data, gameName + ".srm");
+        }
+
+        // Import a save file from the computer
+        const importInput = document.getElementById("import-input");
+        importInput.addEventListener("change", async () => {
+            const file = importInput.files[0];
+            importInput.value = "";
+            if (!file) return;
+            const bytes = new Uint8Array(await file.arrayBuffer());
+
+            if (file.name.toLowerCase().endsWith(".gz")) {
+                await storeSave(stateKind(currentSlot), bytes);
+                refreshSlotLabels();
+                if (gameStarted) {
+                    await loadState();
+                } else {
+                    loadStateAfterBoot = true;
+                    toast("Save state imported into slot " + currentSlot + ". It will load as soon as you launch.");
+                }
+            } else {
+                await storeSave("ingame", bytes);
+                if (gameStarted) toast("Game save imported. Reload the page, launch, and pick your file on the game's file select screen.");
+                else toast("Game save imported for " + currentGame.name + ". Launch, then pick your file on the game's file select screen.");
+            }
+        });
+
+        // 4) Fullscreen
+        const fsBtn = document.getElementById("btn-fullscreen");
+        function toggleFullscreen() {
+            try {
+                if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+                else document.exitFullscreen();
+            } catch (e) {
+                toast("Fullscreen isn't allowed here");
+            }
+        }
+        document.addEventListener("fullscreenchange", () => {
+            fsBtn.textContent = document.fullscreenElement ? "⛶ Exit fullscreen" : "⛶ Fullscreen";
+            resizeGame();
+        });
+
+        // Buttons (mousedown preventDefault stops them stealing keyboard focus,
+        // so pressing Enter in-game doesn't click a button by accident)
+        function hookButton(id, action) {
+            const btn = document.getElementById(id);
+            btn.addEventListener("mousedown", e => e.preventDefault());
+            btn.addEventListener("click", () => { action(); btn.blur(); });
+        }
+        hookButton("btn-resume", () => setPaused(false));
+        hookButton("btn-save-state", saveState);
+        hookButton("btn-load-state", loadState);
+        hookButton("btn-dl-state", downloadStateFile);
+        hookButton("btn-dl-game", downloadGameSave);
+        hookButton("btn-import", () => importInput.click());
+        hookButton("btn-fullscreen", toggleFullscreen);
+        hookButton("btn-pause-controls", openControls);
+        hookButton("btn-main-menu", goToMainMenu);
+
+        // 5) Back to the main menu
+        // The emulator can only start once per page, so this reloads the page.
+        // (In an about:blank tab, reloading would leave a blank page, so it opens a fresh
+        //  about:blank copy and closes this one instead.)
+        function goToMainMenu() {
+            if (!confirm("Go back to the main menu?\n\nAnything since your last save will be lost. (Your saves stay.)")) return;
+            if (window.IN_BLANK) {
+                if (openInBlank()) window.close();
+            } else {
+                location.reload();
+            }
+        }
+        hookButton("menu-import-btn", () => importInput.click());
+
+        // ============================================================
+        //  MOUSE LOOK (GoldenEye)
+        //  Ported from the GoldenEye part of Mouse Injector for GE/PD
+        //  Copyright (C) 2016-2021 Carnivorous, GPL-2.0
+        //  https://github.com/nightcarnage/MouseInjectorGEPD (games/goldeneye.c)
+        //  Every frame it reads Bond's data from the game's memory and adds the
+        //  mouse movement straight onto his camera angles, the same way 1964 GEPD does.
+        // ============================================================
+
+        // ---- Finding the game's RAM inside the emulator ----
+        // N64Wasm keeps the N64's RAM somewhere in its WebAssembly memory but doesn't
+        // say where. When a game boots, the console copies the start of the ROM's code
+        // into RAM, so we search for that code to find where RAM begins.
+        let rdramBase = -1; // byte offset of N64 address 0x80000000 inside the emulator's memory
+
+        // ROMs come in 3 byte orders (.z64 / .v64 / .n64). This reads 4-byte words as .z64 order.
+        function romReader(rom) {
+            const order = rom[0] === 0x80 ? [0, 1, 2, 3] : rom[0] === 0x37 ? [1, 0, 3, 2] : rom[0] === 0x40 ? [3, 2, 1, 0] : null;
+            if (!order) return null;
+            return i => ((rom[i + order[0]] << 24) | (rom[i + order[1]] << 16) | (rom[i + order[2]] << 8) | rom[i + order[3]]) >>> 0;
+        }
+        // heap = the emulator's memory as 32-bit words. Returns the byte offset of RAM, or -1.
+        function findRdram(heap, rom, thorough) {
+            const word = romReader(rom);
+            if (!word) return -1;
+            const entry = word(8) & 0x7FFFFF; // where the boot code copies the game's code (0x400 for GoldenEye)
+            const sig = [];
+            for (let k = 0; k < 32; k++) sig.push(word(0x1000 + k * 4));
+            const lastBase = heap.length * 4 - 0x800000;
+            // The emulator lines its RAM up on a 4 KB boundary. If that fails, do a slower search.
+            for (const step of thorough ? [4096, 16] : [4096]) {
+                let maybe = -1;
+                for (let b = 0; b <= lastBase; b += step) {
+                    const i = (b + entry) >> 2;
+                    if (heap[i] !== sig[0]) continue;
+                    let same = true;
+                    for (let k = 1; k < sig.length; k++) if (heap[i + k] !== sig[k]) { same = false; break; }
+                    if (!same) continue;
+                    const memSize = heap[(b + 0x318) >> 2]; // the console stores its RAM size here at boot
+                    if (memSize === 0x400000 || memSize === 0x800000) return b;
+                    if (maybe < 0) maybe = b;
+                }
+                if (maybe >= 0) return maybe;
+            }
+            return -1;
+        }
+
+        // Read/write the game's memory using N64 addresses (like 0x80079EE0)
+        function memIndex(addr) {
+            addr = addr >>> 0;
+            if (rdramBase < 0 || ((addr & 0xFF800000) >>> 0) !== 0x80000000) return -1;
+            return (rdramBase + (addr & 0x7FFFFF)) >> 2;
+        }
+        function readInt(addr) { const i = memIndex(addr); return i < 0 ? (0xABADC0DE | 0) : Module.HEAP32[i]; }
+        function readFloat(addr) { const i = memIndex(addr); return i < 0 ? NaN : Module.HEAPF32[i]; }
+        function writeFloat(addr, value) { const i = memIndex(addr); if (i >= 0) Module.HEAPF32[i] = value; }
+        const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+        // ---- GoldenEye 007 (US) addresses, from Mouse Injector ----
+        const GE_PLAYER_PTR = 0x80079EE0;  // pointer to player 1's data ("bonddata")
+        const GE_CAMERA = 0x80036494;      // camera mode (0 = multiplayer, 4 = player in control)
+        const GE_EXIT = 0x800364B0;        // 1 = controls enabled
+        const GE_PAUSE = 0x80048370;       // 1 = game paused (watch menu)
+        const GE_MENUPAGE = 0x8002A8C0;    // which menu is showing (11 = playing a level)
+        const GE_MENUX = 0x8002A908;       // menu cursor
+        const GE_MENUY = 0x8002A90C;
+        const GE_TANKXROT = 0x80036484;    // tank turning angle
+        const GE_TANKFLAG = 0x80036448;    // 1 = driving the tank
+        const GE_MATCHENDED = 0x8008C700;  // multiplayer match over
+        // These are added to the player pointer
+        const GE_DEATHFLAG = 0x800D3038 - 0x800D2F60;
+        const GE_CAMX = 0x800D30A8 - 0x800D2F60;
+        const GE_CAMY = 0x800D30B8 - 0x800D2F60;
+        const GE_FOV = 0x800D4124 - 0x800D2F60;
+        const GE_CROSSHAIRX = 0x800D3F50 - 0x800D2F60;
+        const GE_CROSSHAIRY = 0x800D3F54 - 0x800D2F60;
+        const GE_WATCH = 0x800D3128 - 0x800D2F60;
+        const GE_GUNX = 0x800D3F64 - 0x800D2F60;
+        const GE_GUNY = 0x800D3F68 - 0x800D2F60;
+        const GE_AIMINGFLAG = 0x800D3084 - 0x800D2F60;
+        const GE_MPPAUSEMENU = 0x800A9D24 - 0x800A7360;
+        const GE_GUNAIMLIMIT = 6.879164696;
+        const GE_CROSSHAIRLIMIT = 5.159373283;
+        const GE_TANKXROTATIONLIMIT = 6.283185005;
+
+        // Is GoldenEye running? (checks that a few values are in sensible ranges)
+        function geStatus() {
+            const camera = readInt(GE_CAMERA), page = readInt(GE_MENUPAGE), pause = readInt(GE_PAUSE), exit = readInt(GE_EXIT);
+            const mx = readFloat(GE_MENUX), my = readFloat(GE_MENUY);
+            return camera >= 0 && camera <= 10 && page >= -1 && page <= 25 && pause >= 0 && pause <= 1 &&
+                exit >= 0 && exit <= 1 && mx >= 20 && mx <= 420 && my >= 20 && my <= 310;
+        }
+
+        // Adds mouse movement (mx, my in pixels since last frame) to the game.
+        // Returns "game" while Bond is being controlled, "menu" in menus, "" otherwise.
+        function geInject(mx, my, dtMs, s) {
+            const camera = readInt(GE_CAMERA), exit = readInt(GE_EXIT), pause = readInt(GE_PAUSE);
+            const menupage = readInt(GE_MENUPAGE), tankflag = readInt(GE_TANKFLAG), matchended = readInt(GE_MATCHENDED);
+            const pb = readInt(GE_PLAYER_PTR) >>> 0;
+            const dead = readInt(pb + GE_DEATHFLAG), watch = readInt(pb + GE_WATCH);
+            const aiming = readInt(pb + GE_AIMINGFLAG), mppause = readInt(pb + GE_MPPAUSEMENU);
+            const fov = readFloat(pb + GE_FOV);
+            const sens = s.sensitivity / 40;
+            const gunsens = sens * (s.crosshair / 2.5);
+            let camx = readFloat(pb + GE_CAMX), camy = readFloat(pb + GE_CAMY);
+
+            if (camx >= 0 && camx <= 360 && camy >= -90 && camy <= 90 && fov >= 1 && fov <= 120 && dead === 0 && watch === 0 &&
+                pause === 0 && (camera === 4 || camera === 0) && exit === 1 && menupage === 11 && !matchended && !mppause) {
+                const fr = fov / 60; // turn slower when zoomed in
+                if (!tankflag) { // on foot
+                    camx += mx / 10 * sens * fr;
+                    camx = ((camx % 360) + 360) % 360;
+                    writeFloat(pb + GE_CAMX, camx);
+                } else { // in the tank
+                    const L = GE_TANKXROTATIONLIMIT;
+                    let tankx = readFloat(GE_TANKXROT) + mx / 10 * sens / (360 / L * 2.5) * fr;
+                    tankx = ((tankx % L) + L) % L;
+                    writeFloat(GE_TANKXROT, tankx);
+                }
+                camy += (s.invert ? my : -my) / 10 * sens * fr;
+                camy = clamp(camy, tankflag ? -20 : -90, 90);
+                writeFloat(pb + GE_CAMY, camy);
+
+                if (s.crosshair > 0) { // gun and crosshair sway with the mouse
+                    const ySign = s.invert ? -1 : 1;
+                    if (!tankflag) {
+                        let gunx = readFloat(pb + GE_GUNX), crossx = readFloat(pb + GE_CROSSHAIRX);
+                        gunx += mx / (!aiming ? 10 : 40) * gunsens * fr * 0.019;
+                        crossx += mx / (!aiming ? 10 : 40) * gunsens * fr * 0.01912;
+                        if (aiming) { const c = Math.pow(1.07, dtMs / 4); gunx /= c; crossx /= c; } // drift back to center while aiming
+                        writeFloat(pb + GE_GUNX, clamp(gunx, -GE_GUNAIMLIMIT, GE_GUNAIMLIMIT));
+                        writeFloat(pb + GE_CROSSHAIRX, clamp(crossx, -GE_CROSSHAIRLIMIT, GE_CROSSHAIRLIMIT));
+                    }
+                    if ((!tankflag && camy > -90 || tankflag && camy > -20) && camy < 90) {
+                        let guny = readFloat(pb + GE_GUNY), crossy = readFloat(pb + GE_CROSSHAIRY);
+                        guny += ySign * my / (!aiming ? 40 : 20) * gunsens * fr * 0.025;
+                        crossy += ySign * my / (!aiming ? 40 : 20) * gunsens * fr * 0.0225;
+                        if (aiming) { const c = Math.pow(1.35, dtMs / 4); guny /= c; crossy /= c; }
+                        writeFloat(pb + GE_GUNY, clamp(guny, -GE_GUNAIMLIMIT, GE_GUNAIMLIMIT));
+                        writeFloat(pb + GE_CROSSHAIRY, clamp(crossy, -GE_CROSSHAIRLIMIT, GE_CROSSHAIRLIMIT));
+                    }
+                }
+                return "game";
+            }
+            if (menupage !== 11 && menupage !== 23) { // menus: move the menu cursor
+                const menusens = Math.min(sens, 1); // keep the menu cursor usable at very high sensitivity
+                const menux = clamp(readFloat(GE_MENUX) + mx / 10 * menusens * 6, 20, 420);
+                const menuy = clamp(readFloat(GE_MENUY) + my / 10 * menusens * (400 / 290 * 6), 20, 310);
+                writeFloat(GE_MENUX, menux);
+                writeFloat(GE_MENUY, menuy);
+                return "menu";
+            }
+            return "";
+        }
+
+        // ---- Mouse look: browser side (capturing the mouse, buttons, settings) ----
+        const MOUSE_DEFAULTS = { on: true, sensitivity: 20, crosshair: 3, invert: false };
+        const mouseSettings = Object.assign({}, MOUSE_DEFAULTS);
+        try { Object.assign(mouseSettings, JSON.parse(getSetting("n64-player-mouse", "{}"))); } catch (e) {}
+        function saveMouseSettings() { setSetting("n64-player-mouse", JSON.stringify(mouseSettings)); }
+
+        let mouseRunning = false, romForMouse = null, scanTries = 0, nextScanAt = 0, lastFrame = 0, mouseEverWorked = false;
+        let moveX = 0, moveY = 0, wheelTapUntil = 0;
+        const mouseHeld = { left: false, right: false };
+
+        function mouseLookOn() { return gameStarted && !!(currentGame && currentGame.mouse) && mouseSettings.on; }
+        function mouseLocked() { return document.pointerLockElement === canvas; }
+
+        // Some places (like the StackBlitz editor's preview frame) don't allow capturing the mouse.
+        // Then we use "free mode": the mouse still aims and clicks while it's over the game,
+        // you just can't keep turning once the pointer reaches the edge of the screen.
+        let lockBlocked = false, mouseOverCanvas = false, triedLock = false, lockEverWorked = false;
+        const BLOCKED_MSG = "This page isn't allowed to capture the mouse (StackBlitz's editor preview blocks it). " +
+            "The mouse still works over the game: hold it near the left or right edge to keep turning. " +
+            "For proper mouse look, open the preview in its own browser tab.";
+        function lockFailed() {
+            if (!triedLock || lockBlocked) return;
+            // Capture worked before, so it isn't blocked: the browser just wants a fresh click
+            // (it refuses for about a second after you press Esc)
+            if (lockEverWorked) { toast("Click the game to capture the mouse"); return; }
+            lockBlocked = true;
+            canvas.style.cursor = "crosshair";
+            toast(BLOCKED_MSG);
+            console.warn("Mouse look: pointer lock refused, using free mode");
+        }
+        function captureMouse() {
+            if (mouseLocked() || lockBlocked) return;
+            if (typeof canvas.requestPointerLock !== "function") { triedLock = true; lockFailed(); return; }
+            triedLock = true;
+            try {
+                const r = canvas.requestPointerLock();
+                if (r && r.catch) r.catch(lockFailed);
+            } catch (e) { lockFailed(); }
+            // Some browsers fail silently: if we still aren't locked shortly after, use free mode
+            setTimeout(() => { if (!mouseLocked() && !paused && mouseLookOn()) lockFailed(); }, 600);
+        }
+        function releaseMouse() { if (mouseLocked()) document.exitPointerLock(); }
+        // Is the mouse controlling the game right now?
+        function mouseActive() { return mouseLocked() || (lockBlocked && mouseOverCanvas); }
+
+        // Free mode: holding the cursor near the left/right edge keeps turning
+        const EDGE_ZONE = 0.12;    // outer 12% of the game on each side
+        const EDGE_SPEED = 0.6;    // turning speed at the very edge (pixels of mouse movement per ms)
+        let cursorX = -1, lastMouseMode = "";
+        canvas.addEventListener("mousemove", e => {
+            const r = canvas.getBoundingClientRect();
+            cursorX = r.width ? (e.clientX - r.left) / r.width : -1;
+        });
+        canvas.addEventListener("mouseenter", () => { mouseOverCanvas = true; });
+        canvas.addEventListener("mouseleave", () => { mouseOverCanvas = false; mouseHeld.left = mouseHeld.right = false; });
+        canvas.addEventListener("mousedown", e => {
+            if (!mouseLookOn() || paused) return;
+            e.preventDefault();
+            mouseOverCanvas = true;
+            if (!mouseLocked() && !lockBlocked) { captureMouse(); return; } // first click just grabs the mouse
+            if (e.button === 0) mouseHeld.left = true;
+            if (e.button === 2) mouseHeld.right = true;
+        });
+        document.addEventListener("mouseup", e => {
+            if (e.button === 0) mouseHeld.left = false;
+            if (e.button === 2) mouseHeld.right = false;
+        });
+        document.addEventListener("mousemove", e => {
+            if (mouseActive()) { moveX += e.movementX || 0; moveY += e.movementY || 0; }
+        });
+        canvas.addEventListener("wheel", e => {
+            if (!mouseActive()) return;
+            e.preventDefault();
+            if (e.deltaY !== 0) wheelTapUntil = performance.now() + 120; // quick tap of A = next weapon
+        }, { passive: false });
+        document.addEventListener("pointerlockerror", lockFailed);
+        document.addEventListener("pointerlockchange", () => {
+            if (mouseLocked()) { lockEverWorked = true; toast("Mouse captured. " + PAUSE_KEY + " or Esc opens the menu."); return; }
+            mouseHeld.left = mouseHeld.right = false;
+            // Esc let go of the mouse: open the pause menu so the game isn't left running
+            if (mouseLookOn() && !paused) setPaused(true);
+        });
+
+        // Mouse buttons press N64 buttons by "pressing" the key bound to that button
+        const PUNCTUATION = {
+            " ": ["Space", 32], ",": ["Comma", 188], ".": ["Period", 190], "/": ["Slash", 191], ";": ["Semicolon", 186],
+            "'": ["Quote", 222], "[": ["BracketLeft", 219], "]": ["BracketRight", 221], "-": ["Minus", 189],
+            "=": ["Equal", 187], "\\": ["Backslash", 220], "`": ["Backquote", 192],
+            ArrowUp: ["ArrowUp", 38], ArrowDown: ["ArrowDown", 40], ArrowLeft: ["ArrowLeft", 37], ArrowRight: ["ArrowRight", 39],
+            Enter: ["Enter", 13], Backspace: ["Backspace", 8], Delete: ["Delete", 46], Insert: ["Insert", 45],
+            Home: ["Home", 36], End: ["End", 35], PageUp: ["PageUp", 33], PageDown: ["PageDown", 34]
+        };
+        function keyEventInfo(k) {
+            if (PUNCTUATION[k]) return { key: k, code: PUNCTUATION[k][0], keyCode: PUNCTUATION[k][1] };
+            const c = k.length === 1 ? k.toUpperCase() : "";
+            if (c >= "A" && c <= "Z") return { key: k, code: "Key" + c, keyCode: c.charCodeAt(0) };
+            if (c >= "0" && c <= "9") return { key: k, code: "Digit" + c, keyCode: c.charCodeAt(0) };
+            const f = /^F(\d{1,2})$/.exec(k);
+            if (f) return { key: k, code: k, keyCode: 111 + Number(f[1]) };
+            return null;
+        }
+        function sendKey(type, k) {
+            const info = keyEventInfo(k);
+            if (!info) return;
+            const ev = new KeyboardEvent(type, { key: info.key, code: info.code, bubbles: true, cancelable: true });
+            Object.defineProperty(ev, "keyCode", { get: () => info.keyCode });
+            Object.defineProperty(ev, "which", { get: () => info.keyCode });
+            document.dispatchEvent(ev);
+        }
+        const virtualDown = {}; // N64 button -> key we're holding down for it
+        function setVirtualButtons(want) {
+            for (const name of ["Mapping_Action_Z", "Mapping_Action_R", "Mapping_Action_A", "Mapping_Action_B"]) {
+                if (want[name] && !virtualDown[name]) { virtualDown[name] = keys[name]; sendKey("keydown", keys[name]); }
+                else if (!want[name] && virtualDown[name]) { sendKey("keyup", virtualDown[name]); delete virtualDown[name]; }
+            }
+        }
+
+        function startMouseLook(romBytes) {
+            romForMouse = romBytes;
+            nextScanAt = performance.now() + 2000; // give the game a moment to boot
+            if (!mouseRunning) { mouseRunning = true; lastFrame = performance.now(); requestAnimationFrame(mouseFrame); }
+            if (mouseSettings.on) toast("Click the game to capture the mouse");
+        }
+        function mouseFrame(now) {
+            requestAnimationFrame(mouseFrame);
+            const dt = Math.min(now - lastFrame, 100);
+            lastFrame = now;
+            let mode = "";
+            if (mouseLookOn() && !paused) {
+                if (rdramBase < 0 && now >= nextScanAt && scanTries < 30) {
+                    scanTries++;
+                    nextScanAt = now + 1000;
+                    rdramBase = findRdram(Module.HEAPU32, romForMouse, scanTries >= 5);
+                    if (rdramBase >= 0) console.log("Mouse look: found N64 RAM at 0x" + rdramBase.toString(16));
+                    else if (scanTries === 30) toast("Mouse look couldn't find the game's memory");
+                }
+                if (rdramBase >= 0 && geStatus()) {
+                    const active = mouseActive();
+                    if (active && lockBlocked && lastMouseMode === "game" && cursorX >= 0) {
+                        if (cursorX < EDGE_ZONE) moveX -= (EDGE_ZONE - cursorX) / EDGE_ZONE * EDGE_SPEED * dt;
+                        else if (cursorX > 1 - EDGE_ZONE) moveX += (cursorX - (1 - EDGE_ZONE)) / EDGE_ZONE * EDGE_SPEED * dt;
+                    }
+                    mode = geInject(active ? moveX : 0, active ? moveY : 0, dt, mouseSettings);
+                    if (mode) mouseEverWorked = true;
+                }
+            }
+            moveX = moveY = 0;
+            lastMouseMode = mode;
+
+            const want = {};
+            if (mouseActive() && !paused) {
+                if (mode === "game") {
+                    want.Mapping_Action_Z = mouseHeld.left;           // fire
+                    want.Mapping_Action_R = mouseHeld.right;          // aim
+                    want.Mapping_Action_A = now < wheelTapUntil;      // next weapon
+                } else if (mode === "menu") {
+                    want.Mapping_Action_A = mouseHeld.left;           // select
+                    want.Mapping_Action_B = mouseHeld.right;          // back
+                }
+            }
+            setVirtualButtons(want);
+        }
+
+        // ---- Mouse look settings (in the pause menu) ----
+        const mouseSens = document.getElementById("mouse-sens");
+        const mouseSway = document.getElementById("mouse-sway");
+        function refreshMouseUI() {
+            const show = !!(currentGame && currentGame.mouse);
+            document.getElementById("mouse-section").style.display = show ? "block" : "none";
+            if (!show) return;
+            document.getElementById("btn-mouse-toggle").textContent = "Mouse look: " + (mouseSettings.on ? "On" : "Off");
+            document.getElementById("btn-mouse-invert").textContent = "Invert Y: " + (mouseSettings.invert ? "On" : "Off");
+            mouseSens.value = mouseSettings.sensitivity;
+            mouseSway.value = mouseSettings.crosshair;
+            document.getElementById("mouse-sens-label").textContent = (mouseSettings.sensitivity * 5) + "%";
+            document.getElementById("mouse-sway-label").textContent = Math.round(mouseSettings.crosshair * 100 / 6) + "%";
+            let status;
+            if (!mouseSettings.on) status = "Off. The mouse isn't used.";
+            else if (rdramBase < 0) status = scanTries >= 30 ? "Couldn't find the game's memory." : "Waiting for the game to boot...";
+            else if (mouseEverWorked) status = "Working. Click the game after resuming if the mouse isn't captured.";
+            else status = "Found the game's memory, waiting for GoldenEye's menus. If this never changes, the ROM may not be GoldenEye (US).";
+            if (mouseSettings.on && lockBlocked) status += " " + BLOCKED_MSG;
+            document.getElementById("mouse-status").textContent = status;
+        }
+        hookButton("btn-mouse-toggle", () => {
+            mouseSettings.on = !mouseSettings.on;
+            saveMouseSettings();
+            if (!mouseSettings.on) setVirtualButtons({});
+            refreshMouseUI();
+        });
+        hookButton("btn-mouse-invert", () => {
+            mouseSettings.invert = !mouseSettings.invert;
+            saveMouseSettings();
+            refreshMouseUI();
+        });
+        mouseSens.addEventListener("input", () => { mouseSettings.sensitivity = Number(mouseSens.value); saveMouseSettings(); refreshMouseUI(); });
+        mouseSway.addEventListener("input", () => { mouseSettings.crosshair = Number(mouseSway.value); saveMouseSettings(); refreshMouseUI(); });
+        for (const s of [mouseSens, mouseSway]) s.addEventListener("change", () => s.blur());
+
+        // ============================================================
+        //  DOWNLOADING THE EMULATOR + ROMS
+        // ============================================================
+        // Download a file while reporting how many bytes have arrived.
+        // After the first time, files come from the browser's own storage (much faster).
+        let progress = {};
+        function showProgress() {
+            let got = 0, total = 0;
+            for (const p of Object.values(progress)) { got += p.got; total += p.total; }
+            if (total > 0) statusDiv.innerText = "Downloading... " + Math.floor(got / total * 100) + "%";
+        }
+        async function download(url) {
+            let cache = null;
+            try { cache = await caches.open(CACHE_NAME); } catch (e) { /* storage not available */ }
+            if (cache) {
+                const saved = await cache.match(url);
+                if (saved) return new Uint8Array(await saved.arrayBuffer());
+            }
+            const out = await downloadFromNetwork(url);
+            if (cache) {
+                try { await cache.put(url, new Response(out)); } catch (e) { /* storage full, skip */ }
+            }
+            return out;
+        }
+        async function downloadFromNetwork(url) {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error("Download failed (" + res.status + "): " + url);
+            const total = Number(res.headers.get("Content-Length")) || 0;
+            if (!res.body || !total) return new Uint8Array(await res.arrayBuffer());
+
+            // Content-Length can be the COMPRESSED size, so don't trust it for the buffer.
+            // Collect the chunks first, then join them once we know the real size.
+            progress[url] = { got: 0, total };
+            const chunks = [];
+            let size = 0;
+            const reader = res.body.getReader();
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                size += value.length;
+                if (progress[url]) progress[url].got = Math.min(size, total); // keep % from going over 100
+                showProgress();
+            }
+            if (progress[url]) progress[url].got = total;
+            const out = new Uint8Array(size);
+            let offset = 0;
+            for (const c of chunks) { out.set(c, offset); offset += c.length; }
+            return out;
+        }
+
+        // Start the emulator downloads right away, all at the same time
+        const jsPromise = download(N64_CDN + "n64wasm.js");
+        const wasmPromise = download(N64_CDN + "n64wasm.wasm");
+        const assetsPromise = download(N64_CDN + "assets.zip");
+        const coreReady = Promise.all([runtimeReady, jsPromise, wasmPromise, assetsPromise]);
+
+        // ROMs are downloaded when picked (and only once each)
+        const romPromises = {};
+        function getRom(url) {
+            if (!romPromises[url]) {
+                romPromises[url] = download(url);
+                romPromises[url].catch(() => delete romPromises[url]); // allow a retry if it failed
+            }
+            return romPromises[url];
+        }
+
+        // Called whenever a game is picked: enable Launch once everything for it is ready
+        function prepareSelectedGame() {
+            if (gameStarted) return;
+            const forGame = currentGame;
+            startBtn.disabled = true;
+            statusDiv.innerText = "Loading...";
+            Promise.all([coreReady, getRom(forGame.url)])
+                .then(() => {
+                    if (currentGame !== forGame) return; // picked a different game meanwhile
+                    statusDiv.innerText = "Ready!";
+                    startBtn.disabled = false;
+                })
+                .catch(err => {
+                    if (currentGame !== forGame) return;
+                    console.error(err);
+                    statusDiv.innerText = "Error: " + err.message;
+                });
+        }
+
+        // Give the core our (possibly saved) .wasm instead of letting it download it again
+        Module.instantiateWasm = (imports, successCallback) => {
+            wasmPromise
+                .then(bytes => WebAssembly.instantiate(bytes, imports))
+                .then(result => successCallback(result.instance, result.module))
+                .catch(err => {
+                    console.error(err);
+                    statusDiv.innerText = "Error starting core: " + err.message;
+                });
+            return {}; // tells the core we're handling it ourselves
+        };
+
+        // Run the core's JavaScript once it's here
+        jsPromise.then(bytes => {
+            const blob = new Blob([bytes], { type: "text/javascript" });
+            const coreScript = document.createElement("script");
+            coreScript.src = URL.createObjectURL(blob);
+            document.head.appendChild(coreScript);
+        });
+
+        // Pick the starting game (last one you played) and start loading it
+        setCurrentGame(startIndex);
+
+        function writeConfigFile() {
+            const k = keys, j = JOY;
+            const lines = [
+                // gamepad
+                j.Joy_Mapping_Up, j.Joy_Mapping_Down, j.Joy_Mapping_Left, j.Joy_Mapping_Right,
+                j.Joy_Mapping_Action_A, j.Joy_Mapping_Action_B, j.Joy_Mapping_Action_Start,
+                j.Joy_Mapping_Action_Z, j.Joy_Mapping_Action_L, j.Joy_Mapping_Action_R, j.Joy_Mapping_Menu,
+                j.Joy_Mapping_Action_CLEFT, j.Joy_Mapping_Action_CRIGHT, j.Joy_Mapping_Action_CUP, j.Joy_Mapping_Action_CDOWN,
+                // keyboard (order matters!)
+                k.Mapping_Left, k.Mapping_Right, k.Mapping_Up, k.Mapping_Down, k.Mapping_Action_Start,
+                k.Mapping_Action_CUP, k.Mapping_Action_CDOWN, k.Mapping_Action_CLEFT, k.Mapping_Action_CRIGHT,
+                k.Mapping_Action_Z, k.Mapping_Action_L, k.Mapping_Action_R, k.Mapping_Action_B, k.Mapping_Action_A,
+                EMULATOR_MENU_KEY,
+                k.Mapping_Action_Analog_Up, k.Mapping_Action_Analog_Down,
+                k.Mapping_Action_Analog_Left, k.Mapping_Action_Analog_Right,
+                // options
+                0, 0, 0, // no eep / sra / fla save file uploaded
+                SHOW_FPS ? 1 : 0,
+                0,       // swap sticks
+                1,       // disable audio sync (faster, this is N64Wasm's default)
+                0, 0, 0, // invert Y for players 2-4
+                0,       // mobile mode
+                graphicsPlugin === "angrylion" ? 1 : 0,  // angrylion software renderer
+                0,       // mouse mode
+                0,       // use VBO
+                graphicsPlugin === "rice" ? 1 : 0  // rice video plugin
+            ];
+            FS.writeFile("config.txt", lines.join("\r\n") + "\r\n");
+            FS.writeFile("cheat.txt", "");
+        }
+
+        // Audio: the core fills a ring buffer and we play it with Web Audio
+        let setRemainingAudio = null;
+        function initAudio() {
+            const ctx = new AudioContext({ latencyHint: "interactive", sampleRate: 44100 });
+            audioCtx = ctx;
+            const gain = ctx.createGain();
+            gain.gain.value = 0.5;
+            gain.connect(ctx.destination);
+
+            const SIZE = 64000, CHUNK = 1024;
+            const buf = new Int16Array(Module.HEAP16.buffer, Module._neilGetSoundBufferResampledAddress(), SIZE);
+            let readPos = 0;
+
+            const proc = ctx.createScriptProcessor(CHUNK, 2, 2);
+            proc.onaudioprocess = e => {
+                const writePos = Module._neilGetAudioWritePosition();
+                const L = e.outputBuffer.getChannelData(0);
+                const R = e.outputBuffer.getChannelData(1);
+                for (let i = 0; i < CHUNK; i++) {
+                    if (readPos !== writePos) {
+                        L[i] = buf[readPos] / 32768;
+                        R[i] = buf[readPos + 1] / 32768;
+                        readPos += 2;
+                        if (readPos === SIZE) readPos = 0;
+                    } else {
+                        L[i] = 0; R[i] = 0;
+                    }
+                }
+                if (setRemainingAudio) {
+                    let remaining = writePos - readPos;
+                    if (remaining < 0) remaining += SIZE;
+                    setRemainingAudio(remaining);
+                }
+            };
+            proc.connect(gain);
+            ctx.resume();
+        }
+
+        startBtn.addEventListener("click", async () => {
+            startBtn.disabled = true;
+            gameSelect.disabled = true; // the emulator can only run one game per page load
+            graphicsSelect.disabled = true;
+            try {
+                await runtimeReady;
+                initAudio(); // do this right away, inside the click, so browsers allow sound
+
+                FS.writeFile("assets.zip", await assetsPromise);
+                const romBytes = await getRom(currentGame.url);
+                FS.writeFile("custom.v64", romBytes);
+
+                // Put back this game's own save from last time (if there is one)
+                const ingame = await loadSave("ingame");
+                if (ingame) FS.writeFile("/game.savememory", ingame);
+
+                writeConfigFile();
+
+                menuDiv.style.display = "none";
+                containerDiv.style.display = "block";
+                document.title = currentGame.name;
+
+                Module.callMain(["custom.v64"]);
+                setRemainingAudio = Module.cwrap("neil_set_buffer_remaining", null, ["number"]);
+                gameStarted = true;
+                canvas.focus();
+                if (currentGame.mouse) startMouseLook(romBytes);
+            } catch (err) {
+                console.error(err);
+                menuDiv.style.display = "block";
+                containerDiv.style.display = "none";
+                statusDiv.innerText = "Error: " + err.message;
+                startBtn.disabled = false;
+                gameSelect.disabled = false;
+                graphicsSelect.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
